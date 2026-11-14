@@ -18,6 +18,7 @@ ffmpeg, so you do not need to install Python or ffmpeg.
 - Keeps the aspect ratio. You set the number of character rows.
 - Shows a frame progress bar and an ETA for videos.
 - Encodes with any ffmpeg encoder, including GPU encoders such as `h264_nvenc`.
+- Updates itself with `ascii-media update`.
 
 ## Install
 
@@ -82,6 +83,17 @@ ascii-media clip.mp4 -c hevc_amf          # encodes on an AMD GPU
 ```
 
 The output video has no audio track.
+
+### Update
+
+```sh
+ascii-media update
+```
+
+The command downloads the latest release for your platform, checks it against
+the release `SHA256SUMS` file, and replaces the installed binary. It works only
+for the standalone binary. Version 1.0.0 does not have this command, so run the
+install script again once to get it.
 
 ## How it works
 

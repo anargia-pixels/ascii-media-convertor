@@ -1,6 +1,7 @@
 """Command-line interface for ascii-media."""
 
 import io
+import os
 import sys
 import time
 from pathlib import Path
@@ -10,15 +11,17 @@ from rich.console import Console
 from rich.markup import escape
 from rich.progress import (
     BarColumn,
+    DownloadColumn,
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
+    TransferSpeedColumn,
 )
 
-from ascii_media import __version__
+from ascii_media import __version__, update
 from ascii_media.convert import (
     IMAGE_SUFFIXES,
     convert_image,
@@ -41,6 +44,8 @@ ascii-media cat.png --text                   [dim]# writes cat-ascii.txt[/]
 ascii-media clip.mp4 -r 72 -o small.mp4      [dim]# writes a 720p video[/]
 
 ascii-media clip.mp4 -c h264_nvenc           [dim]# encodes on an NVIDIA GPU[/]
+
+ascii-media update                           [dim]# installs the latest release[/]
 """
 
 console = Console(stderr=True)
@@ -55,6 +60,18 @@ def default_output(input_path: Path, is_image: bool, text: bool) -> Path:
     else:
         suffix = ".mp4"
     return input_path.with_name(f"{input_path.stem}-ascii{suffix}")
+
+
+# Entry point
+def run() -> None:
+    """Send `ascii-media update` to the updater and all other input to main."""
+    if isinstance(sys.stderr, io.TextIOWrapper):
+        sys.stderr.reconfigure(errors="replace")  # legacy code pages lack ✓ and ━
+    update.remove_stale()
+    if sys.argv[1:2] == ["update"]:
+        update_command.main(sys.argv[2:], prog_name="ascii-media update")
+    else:
+        main()
 
 
 # Commands
@@ -115,8 +132,6 @@ def main(
     Images (PNG, JPEG, BMP, WebP, TIFF) become a picture or a text file.
     Every other INPUT is read as a video and written as a video.
     """
-    if isinstance(sys.stderr, io.TextIOWrapper):
-        sys.stderr.reconfigure(errors="replace")  # legacy code pages lack ✓ and ━
     is_image = input.suffix.lower() in IMAGE_SUFFIXES
     if text and not is_image:
         raise click.UsageError("--text works only with image input.")
@@ -166,3 +181,47 @@ def convert_with_progress(
             crf,
             on_frame=lambda: progress.advance(task),
         )
+
+
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+def update_command() -> None:
+    """Replace this binary with the latest release from GitHub.
+
+    Checks the download against the release SHA256SUMS file.
+    """
+    if not update.is_standalone():
+        raise click.ClickException(
+            "update works only for the standalone binary. "
+            "From source, run: git pull && uv sync"
+        )
+
+    try:
+        with console.status("Checking for a new release"):
+            tag = update.latest_tag()
+        if not update.is_newer(tag):
+            console.print(f"[green]✓[/] ascii-media {__version__} is up to date")
+            return
+
+        columns = (
+            TextColumn(f"[bold]Downloading {tag}"),
+            BarColumn(),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            TimeRemainingColumn(),
+        )
+        with Progress(*columns, console=console) as progress:
+            task = progress.add_task("download", total=None)
+            new = update.fetch(
+                tag,
+                on_start=lambda size: progress.update(task, total=size),
+                on_chunk=lambda size: progress.advance(task, size),
+            )
+        exe = update.swap(new)
+    except (ValueError, OSError) as error:
+        raise click.ClickException(f"Update failed: {error}") from error
+
+    # The binary on disk is now the new release, and PyInstaller would load
+    # any further import from it. Print without rich and exit at once.
+    sys.stderr.write(f"✓ Updated {exe} to {tag}\n")
+    sys.stderr.flush()
+    os._exit(0)
